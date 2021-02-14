@@ -1,8 +1,6 @@
 package it.unibz.inf.ontop.dbschema.impl;
 
 import it.unibz.inf.ontop.dbschema.QuotedID;
-import it.unibz.inf.ontop.dbschema.QuotedIDFactory;
-import it.unibz.inf.ontop.dbschema.RelationID;
 
 import javax.annotation.Nonnull;
 import java.util.Objects;
