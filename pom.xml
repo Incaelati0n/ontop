@@ -669,13 +669,13 @@
             </dependency>
 
             <dependency>
-                <groupId>org.apache.ksql</groupId>
+                <groupId>com.github.mmolimar.ksql</groupId>
                 <artifactId>ksql-jdbc</artifactId>
                 <version>${ksql-jdbc.version}</version>
             </dependency>
 
             <dependency>
-                <groupId>org.apache.flink</groupId>
+                <groupId>com.ververica.flink.table</groupId>
                 <artifactId>flink-jdbc</artifactId>
                 <version>${flink-jdbc.version}</version>
             </dependency>
