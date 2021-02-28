@@ -3,6 +3,7 @@ package it.unibz.inf.ontop.utils;
 import it.unibz.inf.ontop.injection.OntopSQLCredentialSettings;
 
 import java.sql.Connection;
+import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 
@@ -21,10 +22,15 @@ public class LocalJDBCConnectionUtils {
             // Otherwise, JDBC drivers are not initialized by default.
             try {
                 Class.forName(settings.getJdbcDriver());
+
+                // Kafka (ksql) Driver needs "special" registering
+                if((settings.getJdbcDriver().equals("com.github.mmolimar.ksql.jdbc.KsqlDriver"))){
+                    Driver ksqlDriver = new com.github.mmolimar.ksql.jdbc.KsqlDriver();
+                    DriverManager.registerDriver(ksqlDriver);
+                }
             } catch (ClassNotFoundException e) {
                 throw new SQLException("Cannot load the driver: " + e.getMessage());
             }
-
             return DriverManager.getConnection(settings.getJdbcUrl(), settings.getJdbcUser(), settings.getJdbcPassword());
         }
     }
