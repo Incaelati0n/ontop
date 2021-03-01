@@ -20,7 +20,8 @@ public class KafkaSQLDBTypeFactory extends DefaultSQLDBTypeFactory {
      */
 
     protected static final String STRING_STR = "STRING";
-    protected static final String STRING_ARRAY = "ARRAY";
+    protected static final String LONG_STR = "LONG";
+    protected static final String DEC_STR = "DEC";
 
     @AssistedInject
     protected KafkaSQLDBTypeFactory(@Assisted TermType rootTermType, @Assisted TypeFactory typeFactory) {
@@ -31,10 +32,19 @@ public class KafkaSQLDBTypeFactory extends DefaultSQLDBTypeFactory {
 
         TermTypeAncestry rootAncestry = rootTermType.getAncestry();
 
+        RDFDatatype xsdInt = typeFactory.getDatatype(XSD.INT);
+        RDFDatatype xsdLong = typeFactory.getDatatype(XSD.LONG);
+
+        DBTermType intType = new NumberDBTermType(INT_STR, rootAncestry, xsdInt, INTEGER);
+        DBTermType longType = new NumberDBTermType(LONG_STR, rootAncestry, xsdLong, INTEGER);
         DBTermType stringType = new StringDBTermType(STRING_STR, rootAncestry, typeFactory.getXsdStringDatatype());
 
         Map<String, DBTermType> map = createDefaultSQLTypeMap(rootTermType, typeFactory);
+        map.put(INT_STR,intType);
+        map.put(INTEGER_STR,intType);
         map.put(STRING_STR, stringType);
+        map.put(BIGINT_STR,longType);
+        map.put(DEC_STR, map.get(DECIMAL_STR));
         return map;
     }
 
