@@ -123,9 +123,4 @@ public class SparkSQLDBFunctionSymbolFactory extends AbstractSQLDBFunctionSymbol
         // TODO: throw a better exception
         throw new UnsupportedOperationException("Serialization of the time zone: " + UNSUPPORTED_MSG);
     }
-/*
-    @Override
-    protected DBFunctionSymbol createR2RMLIRISafeEncode() {
-        return new SparkSQLR2RMLSafeIRIEncodeFunctionSymbol(dbStringType);
-    }*/
 }
