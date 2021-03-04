@@ -8,8 +8,7 @@ import it.unibz.inf.ontop.model.vocabulary.XSD;
 
 import java.util.Map;
 
-import static it.unibz.inf.ontop.model.type.DBTermType.Category.FLOAT_DOUBLE;
-import static it.unibz.inf.ontop.model.type.DBTermType.Category.INTEGER;
+import static it.unibz.inf.ontop.model.type.DBTermType.Category.*;
 
 public class KafkaSQLDBTypeFactory extends DefaultSQLDBTypeFactory {
 
@@ -34,17 +33,19 @@ public class KafkaSQLDBTypeFactory extends DefaultSQLDBTypeFactory {
 
         RDFDatatype xsdInt = typeFactory.getDatatype(XSD.INT);
         RDFDatatype xsdLong = typeFactory.getDatatype(XSD.LONG);
+        RDFDatatype xsdDecimal = typeFactory.getDatatype(XSD.DECIMAL);
 
         DBTermType intType = new NumberDBTermType(INT_STR, rootAncestry, xsdInt, INTEGER);
         DBTermType longType = new NumberDBTermType(LONG_STR, rootAncestry, xsdLong, INTEGER);
         DBTermType stringType = new StringDBTermType(STRING_STR, rootAncestry, typeFactory.getXsdStringDatatype());
+        DBTermType decimalType = new NumberDBTermType(DEC_STR, rootAncestry, xsdDecimal, DECIMAL);
 
         Map<String, DBTermType> map = createDefaultSQLTypeMap(rootTermType, typeFactory);
         map.put(INT_STR,intType);
         map.put(INTEGER_STR,intType);
         map.put(STRING_STR, stringType);
         map.put(BIGINT_STR,longType);
-        map.put(DEC_STR, map.get(DECIMAL_STR));
+        map.put(DEC_STR, decimalType);
         return map;
     }
 
