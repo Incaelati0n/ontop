@@ -10,6 +10,7 @@ import java.util.Optional;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
+import it.unibz.inf.ontop.answering.connection.JDBCStatementFinalizer;
 import it.unibz.inf.ontop.answering.logging.QueryLogger;
 import it.unibz.inf.ontop.answering.reformulation.input.*;
 import it.unibz.inf.ontop.answering.resultset.GraphResultSet;
@@ -47,6 +48,7 @@ import java.util.regex.Pattern;
 public class SQLQuestStatement extends QuestStatement {
 
     private final Statement sqlStatement;
+    private final JDBCStatementFinalizer statementFinalizer;
     private final TermFactory termFactory;
     private final RDF rdfFactory;
     private final SubstitutionFactory substitutionFactory;
@@ -56,11 +58,12 @@ public class SQLQuestStatement extends QuestStatement {
     private static final Logger log = LoggerFactory.getLogger(QuestStatement.class);
 
     public SQLQuestStatement(QueryReformulator queryProcessor, Statement sqlStatement,
-                             TermFactory termFactory,
+                             JDBCStatementFinalizer statementFinalizer, TermFactory termFactory,
                              RDF rdfFactory, SubstitutionFactory substitutionFactory,
                              OntopSystemSQLSettings settings) {
         super(queryProcessor);
         this.sqlStatement = sqlStatement;
+        this.statementFinalizer = statementFinalizer;
         this.termFactory = termFactory;
         this.rdfFactory = rdfFactory;
         this.substitutionFactory = substitutionFactory;
@@ -158,7 +161,7 @@ public class SQLQuestStatement extends QuestStatement {
     public void close() throws OntopConnectionException {
         try {
             if (sqlStatement != null)
-                sqlStatement.close();
+                statementFinalizer.closeStatement(sqlStatement);
         } catch (SQLException e) {
             throw new OntopConnectionException(e);
         }
@@ -180,7 +183,7 @@ public class SQLQuestStatement extends QuestStatement {
             try {
                 java.sql.ResultSet set = sqlStatement.executeQuery(sqlQuery);
                 queryLogger.declareResultSetUnblockedAndSerialize();
-                return new SQLBooleanResultSet(set, queryLogger);
+                return new SQLBooleanResultSet(set, queryLogger, this::close);
             } catch (SQLException e) {
                 throw new OntopQueryEvaluationException(e.getMessage());
             }
@@ -191,7 +194,8 @@ public class SQLQuestStatement extends QuestStatement {
     }
 
     @Override
-    public TupleResultSet executeSelectQuery(IQ executableQuery, QueryLogger queryLogger)
+    protected TupleResultSet executeSelectQuery(IQ executableQuery, QueryLogger queryLogger,
+                                                boolean shouldAlsoCloseStatement)
             throws OntopQueryEvaluationException {
         try {
             String sqlQuery = extractSQLQuery(executableQuery);
@@ -199,6 +203,9 @@ public class SQLQuestStatement extends QuestStatement {
             NativeNode nativeNode = extractNativeNode(executableQuery);
             ImmutableSortedSet<Variable> signature = nativeNode.getVariables();
             ImmutableMap<Variable, DBTermType> typeMap = nativeNode.getTypeMap();
+
+            OntopConnectionCloseable statementClosingCB = shouldAlsoCloseStatement ? this::close : null;
+
             try {
 
                 //try something for ksql
@@ -219,8 +226,10 @@ public class SQLQuestStatement extends QuestStatement {
                 drop_tmpStreams();
 
                 return settings.isDistinctPostProcessingEnabled()
-                        ? new DistinctJDBCTupleResultSet(set, signature, typeMap, constructionNode, executableQuery.getProjectionAtom(), queryLogger, termFactory, substitutionFactory)
-                        : new JDBCTupleResultSet(set, signature, typeMap, constructionNode, executableQuery.getProjectionAtom(), queryLogger, termFactory, substitutionFactory);
+                        ? new DistinctJDBCTupleResultSet(set, signature, typeMap, constructionNode,
+                            executableQuery.getProjectionAtom(), queryLogger, statementClosingCB, termFactory, substitutionFactory)
+                        : new JDBCTupleResultSet(set, signature, typeMap, constructionNode, executableQuery.getProjectionAtom(),
+                            queryLogger, statementClosingCB, termFactory, substitutionFactory);
             } catch (SQLException e) {
                 throw new OntopQueryEvaluationException(e);
             }
@@ -427,8 +436,12 @@ public class SQLQuestStatement extends QuestStatement {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    /**
+     * TODO: make it SQL-independent
+     */
     @Override
-    public GraphResultSet executeGraphQuery(ConstructTemplate constructTemplate, IQ executableQuery, QueryLogger queryLogger)
+    protected GraphResultSet executeConstructQuery(ConstructTemplate constructTemplate, IQ executableQuery, QueryLogger queryLogger,
+                                                   boolean shouldAlsoCloseStatement)
             throws OntopQueryEvaluationException, OntopResultConversionException, OntopConnectionException {
         TupleResultSet tuples;
         try {
@@ -437,11 +450,14 @@ public class SQLQuestStatement extends QuestStatement {
             NativeNode nativeNode = extractNativeNode(executableQuery);
             ImmutableSortedSet<Variable> SQLSignature = nativeNode.getVariables();
             ImmutableMap<Variable, DBTermType> SQLTypeMap = nativeNode.getTypeMap();
+
+            OntopConnectionCloseable statementClosingCB = shouldAlsoCloseStatement ? this::close : null;
+
             try {
                 ResultSet rs = sqlStatement.executeQuery(sqlQuery);
                 queryLogger.declareResultSetUnblockedAndSerialize();
                 tuples = new JDBCTupleResultSet(rs, SQLSignature, SQLTypeMap, constructionNode,
-                        executableQuery.getProjectionAtom(), queryLogger, termFactory, substitutionFactory);
+                        executableQuery.getProjectionAtom(), queryLogger, statementClosingCB, termFactory, substitutionFactory);
             } catch (SQLException e) {
                 throw new OntopQueryEvaluationException(e.getMessage());
             }
@@ -449,7 +465,8 @@ public class SQLQuestStatement extends QuestStatement {
             queryLogger.declareResultSetUnblockedAndSerialize();
             tuples = new EmptyTupleResultSet(executableQuery.getProjectionAtom().getArguments(), queryLogger);
         }
-        return new DefaultSimpleGraphResultSet(tuples, constructTemplate, termFactory, rdfFactory, this, false);
+        return new DefaultSimpleGraphResultSet(tuples, constructTemplate, termFactory, rdfFactory,
+                settings.areInvalidTriplesExcludedFromResultSet());
     }
 
     private NativeNode extractNativeNode(IQ executableQuery) throws EmptyQueryException {
