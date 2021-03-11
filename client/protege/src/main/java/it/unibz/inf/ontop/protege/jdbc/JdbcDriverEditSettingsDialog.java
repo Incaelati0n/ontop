@@ -85,7 +85,11 @@ public class JdbcDriverEditSettingsDialog extends JDialog {
                 "org.h2.Driver",
                 "com.ibm.db2.jcc.DB2Driver",
                 "oracle.jdbc.driver.OracleDriver",
-                "com.microsoft.sqlserver.jdbc.SQLServerDriver" });
+                "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+                "org.apache.hive.jdbc.HiveDriver",
+                "com.ververica.flink.table.jdbc.FlinkDriver",
+                "com.github.mmolimar.ksql.jdbc.KsqlDriver"
+        });
         classField.setEditable(true);
         mainPanel.add(classField,
                 new GridBagConstraints(1, 1, 2, 1, 1, 0,
