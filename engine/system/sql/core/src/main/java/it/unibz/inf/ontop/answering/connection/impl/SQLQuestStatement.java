@@ -208,14 +208,14 @@ public class SQLQuestStatement extends QuestStatement {
 
             try {
 
-                //try something for ksql
-                sqlQuery = transformSQLIntoKSQL(sqlQuery);
+                // try something for ksql
+                //sqlQuery = transformSQLIntoKSQL(sqlQuery);
 
                 java.sql.ResultSet set = sqlStatement.executeQuery(sqlQuery);
                 queryLogger.declareResultSetUnblockedAndSerialize();
 
                 // only needed for kafka..
-                if (set.next() == false) {
+                /*if (set.next() == false) {
                     //ResultSet is empty
                 } else {
                     do {
@@ -223,7 +223,7 @@ public class SQLQuestStatement extends QuestStatement {
                     } while (set.next());
                 }
 
-                drop_tmpStreams();
+                drop_tmpStreams();*/
 
                 return settings.isDistinctPostProcessingEnabled()
                         ? new DistinctJDBCTupleResultSet(set, signature, typeMap, constructionNode,
