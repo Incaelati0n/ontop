@@ -15,6 +15,7 @@ import it.unibz.inf.ontop.model.term.Variable;
 import it.unibz.inf.ontop.substitution.ImmutableSubstitution;
 import it.unibz.inf.ontop.utils.ImmutableCollectors;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,8 +71,8 @@ public class KafkaSQLSelectFromWhereSerializer extends DefaultSelectFromWhereSer
             // Kafka replace IS NULL, IS NOT NULL parts
             String whereString = selectFromWhere.getWhereExpression()
                     .map(e -> sqlTermSerializer.serialize(e, columnIDs))
-                    //.map(s -> String.format("WHERE %s\n", s))
-                    .map(s -> String.format("WHERE %s\n", s.replaceAll("\\(.* NULL AND", "(")))
+                    .map(s -> String.format("WHERE %s\n", s))
+                    //.map(s -> String.format("WHERE %s\n", s.replaceAll("\\(.* NULL AND", "(")))
                     .orElse("");
 
             String groupByString = serializeGroupBy(selectFromWhere.getGroupByVariables(), columnIDs);
