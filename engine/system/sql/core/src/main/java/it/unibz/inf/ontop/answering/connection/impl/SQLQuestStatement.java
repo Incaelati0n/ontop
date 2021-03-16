@@ -32,6 +32,11 @@ import it.unibz.inf.ontop.model.term.TermFactory;
 import it.unibz.inf.ontop.model.term.Variable;
 import it.unibz.inf.ontop.model.type.DBTermType;
 import it.unibz.inf.ontop.substitution.SubstitutionFactory;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.statement.select.PlainSelect;
+import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.util.TablesNamesFinder;
 import org.apache.commons.rdf.api.RDF;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +58,14 @@ public class SQLQuestStatement extends QuestStatement {
     private final RDF rdfFactory;
     private final SubstitutionFactory substitutionFactory;
     private final OntopSystemSQLSettings settings;
+
+    private List<String> create_stream=new ArrayList<>();
+    private List<String> insert_stream=new ArrayList<>();
     private List<String> drop_stream=new ArrayList<>();
+    private boolean isMainSelect = true;
+    private String mainStream_name;
+    private String mainStream_body;
+    private String main_select;
 
     private static final Logger log = LoggerFactory.getLogger(QuestStatement.class);
 
@@ -207,30 +219,29 @@ public class SQLQuestStatement extends QuestStatement {
             OntopConnectionCloseable statementClosingCB = shouldAlsoCloseStatement ? this::close : null;
 
             try {
-
-                // try something for ksql
-                //sqlQuery = transformSQLIntoKSQL(sqlQuery);
-
-                java.sql.ResultSet set = sqlStatement.executeQuery(sqlQuery);
-                queryLogger.declareResultSetUnblockedAndSerialize();
-
-                // only needed for kafka..
-                /*if (set.next() == false) {
-                    //ResultSet is empty
-                } else {
-                    do {
-                        set.getString(1);
-                    } while (set.next());
+                java.sql.ResultSet set;
+                if((settings.getJdbcDriver().equals("com.github.mmolimar.ksql.jdbc.KsqlDriver"))){
+                    sqlQuery = transformSQLIntoKSQL(sqlQuery);
+                    set = sqlStatement.executeQuery(sqlQuery);
+                    if (set.next() == false) {
+                        //ResultSet is empty
+                    } else {
+                        do {
+                            set.getString(1);
+                        } while (set.next());
+                    }
+                    //executeAdditionalQuery(-1);
+                }else{
+                    set = sqlStatement.executeQuery(sqlQuery);
                 }
-
-                drop_tmpStreams();*/
+                queryLogger.declareResultSetUnblockedAndSerialize();
 
                 return settings.isDistinctPostProcessingEnabled()
                         ? new DistinctJDBCTupleResultSet(set, signature, typeMap, constructionNode,
                             executableQuery.getProjectionAtom(), queryLogger, statementClosingCB, termFactory, substitutionFactory)
                         : new JDBCTupleResultSet(set, signature, typeMap, constructionNode, executableQuery.getProjectionAtom(),
                             queryLogger, statementClosingCB, termFactory, substitutionFactory);
-            } catch (SQLException e) {
+            } catch (SQLException | JSQLParserException e) {
                 throw new OntopQueryEvaluationException(e);
             }
         } catch (EmptyQueryException e) {
@@ -240,19 +251,106 @@ public class SQLQuestStatement extends QuestStatement {
     }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// For now Kafka part implemented here; todo: find better place for it, maybe own file.
-////
-    private String transformSQLIntoKSQL(String sql) throws OntopQueryEvaluationException {
+    /** For now Kafka part is implemented here in this file;
+     * todo: find better place for ksql impl. (own file?)
+     */
+
+    private void rewriteSqltoKsql(String plainSelect){
+
+        plainSelect = plainSelect.replaceAll("\\(.*`ROWKEY` AND", "(");
+
+        Pattern pattern = Pattern.compile("`[^`]*`\\.");
+        Matcher matcher = pattern.matcher(plainSelect);
+
+        while(matcher.find()) {
+            plainSelect = plainSelect.replace(matcher.group(),"");
+        }
+
+        plainSelect = plainSelect.replace("ELSE NULL", "ELSE ''");
+
+        boolean isSingleSelect = (plainSelect.split("SELECT", -1).length-1) == 1? true : false;
+        if(!isSingleSelect){
+            plainSelect = plainSelect.replace((
+                    (matcher = Pattern.compile("(\\(SELECT.*FROM `.*?`)").matcher(plainSelect))
+                            .find() ? matcher.group(1) : ""),"");
+            if(!isMainSelect){
+                plainSelect = plainSelect.replace((
+                        (matcher = Pattern.compile("(WHERE.*)\\)").matcher(plainSelect))
+                                .find() ? matcher.group(1) : ""),"");
+            }else{
+                plainSelect = plainSelect.replace((
+                        (matcher = Pattern.compile(".*(`.*` WHERE.*?\\))").matcher(plainSelect))
+                                .find() ? matcher.group(1) : ""),"");
+            }
+        }
+        String select_body = (
+                (matcher = Pattern.compile("(.*)`v.*?`(.*)").matcher(plainSelect))
+                        .find() ? matcher.group(1) + matcher.group(2) : null);
+
+        String select_name = (
+                (matcher = Pattern.compile(".*(`v.*?`).*").matcher(plainSelect))
+                        .find() ? matcher.group(1) : null);
+
+        if((select_body == null) || (select_name == null)){
+            //
+        }else{
+            if(select_body.endsWith(") "))
+            {
+                select_body = select_body.substring(0,select_body.length() - 2);
+            }
+            if(isMainSelect){
+                select_body = select_body.replace((
+                        (matcher = Pattern.compile(".*FROM.*?(`.*?`\\))").matcher(select_body))
+                                .find() ? matcher.group(1) : ""),"");
+                mainStream_name = select_name;
+                mainStream_body = select_body.replaceAll("FROM.*", "");
+                String obj = ((matcher = Pattern.compile(".*(`v.*?`).*").matcher(mainStream_body)).find() ? matcher.group(1) : null);
+                main_select = mainStream_body + " FROM " + mainStream_name + " WHERE " + obj + " IS NOT NULL EMIT CHANGES LIMIT 1;";
+                isMainSelect = false;
+            }else{
+                if(!isSingleSelect) {
+                    String sub_insertQuery = "INSERT INTO " + mainStream_name + " " + mainStream_body + " FROM " + select_name;
+                    insert_stream.add(sub_insertQuery);
+                    int limit_size = insert_stream.size();
+                    String obj = ((matcher = Pattern.compile(".*(`v.*?`).*").matcher(mainStream_body)).find() ? matcher.group(1) : null);
+                    main_select = mainStream_body + " FROM " + mainStream_name + " WHERE " + obj + " IS NOT NULL EMIT CHANGES LIMIT " + limit_size;
+                }
+            }
+            String sub_streamQuery = "CREATE STREAM " + select_name + " AS " + select_body;
+            String sub_dropQuery = "DROP STREAM " + select_name;
+            create_stream.add(sub_streamQuery);
+            drop_stream.add(sub_dropQuery);
+        }
+    }
+
+    private void iterateNestedQuery(String sql) throws JSQLParserException {
+        Select select = (Select) CCJSqlParserUtil.parse(sql);
+
+        TablesNamesFinder tablesNamesFinder = new TablesNamesFinder() {
+            @Override
+            public void visit(PlainSelect plainSelect) {
+                rewriteSqltoKsql(plainSelect.toString());
+                super.visit(plainSelect);
+            }
+        };
+        tablesNamesFinder.getTableList(select);
+    }
+
+    private String transformSQLIntoKSQL(String sql) throws JSQLParserException {
 
         // Check if query is nested
         boolean isNestedQuery = (sql.split("SELECT", -1).length-1) > 1? true : false;
 
-        // Remove nulls in query
-        sql = removeNull(sql);
-
         // Rewrite nested query
         if(isNestedQuery){
-            sql = rewriteSql(sql);
+            iterateNestedQuery(sql);
+            //drop streams
+            executeAdditionalQuery(-1);
+            //create streams
+            executeAdditionalQuery(1);
+            //insert data
+            executeAdditionalQuery(2);
+            sql = main_select;
         }else{
             sql = sql + "EMIT CHANGES LIMIT 1;";
         }
@@ -261,140 +359,51 @@ public class SQLQuestStatement extends QuestStatement {
         return sql;
     }
 
-    private String removeNull(String sql){
+    private void executeAdditionalQuery(int type){
+        /*type -1 = drop
+        type 0 = select
+        type 1 = create
+        type 2 = insert*/
 
-        // Remove all nulls
-        BufferedReader buffReader = new BufferedReader(new StringReader(sql));
-        String line = null;
-        Matcher matcher;
+        int tmp_counter;
 
-        try{
-            while( (line=buffReader.readLine()) != null )
-            {
-                // remove null, and, if null in where and no end, remove complete where
-                boolean isNullQuery = (line.split("NULL", -1).length-1) >= 1? true : false;
-                boolean isNullAndQuery = (line.split("NULL AND", -1).length-1) >= 1? true : false;
-
-                boolean isCaseNull = (line.split("ELSE NULL", -1).length-1) >= 1? true : false;
-
-                if(isNullQuery){
-                    if(isCaseNull){
-                        sql.replaceAll("ELSE NULL", "");
-                    }else if(isNullAndQuery){
-                        //remove null part
-                        String null_part = (
-                                (matcher = Pattern.compile("WHERE (.* NULL AND)?").matcher(line))
-                                        .find() ? matcher.group(1) : null);
-                        sql = sql.replaceAll(null_part, "");
-                    }else{
-                        //remove full where clause
-                        String null_where = (
-                                (matcher = Pattern.compile("WHERE .* NULL").matcher(line))
-                                        .find() ? matcher.group() : null);
-                        sql = sql.replaceAll(null_where, "");
+        switch(type) {
+            case -1:
+                drop_tmpStreams();
+                break;
+            case 0:
+                try{
+                    sqlStatement.executeQuery(main_select);
+                }catch (SQLException ex){
+                    ex.printStackTrace();
+                }
+                break;
+            case 1:
+                tmp_counter = create_stream.size()-1;
+                while (tmp_counter > -1)
+                {
+                    try{
+                        sqlStatement.executeQuery(create_stream.get(tmp_counter));
+                        tmp_counter = tmp_counter - 1;
+                    }catch (SQLException ex){
+                        ex.printStackTrace();
                     }
                 }
-            }
-        }catch(IOException ex){
-            ex.printStackTrace();
-        }
-        log.debug("//KSQL-after NULL removed");
-        log.debug(sql);
-        log.debug("/////////////////////////");
-        return sql;
-    }
-
-    private String rewriteSql(String sql){
-        // change pattern matching. matching result contains to be stream name
-        List<String> sub_streams=new ArrayList<String>();
-        List<String> sub_streamNames=new ArrayList<String>();
-        int index = 0;
-        int stream_amount = 0;
-
-        String mydata = sql.replaceAll("(\\t|\\r?\\n)+", " ");
-        String myoriginaldata = mydata;
-        Pattern pattern = Pattern.compile("\\(SELECT .*\\)");
-        Matcher matcher = pattern.matcher(mydata);
-        while (matcher.find())
-        {
-            mydata = matcher.group(0);
-        }
-        pattern = Pattern.compile("\\) (`.*?`)");
-        matcher = pattern.matcher(mydata);
-        while (matcher.find())
-        {
-            sub_streamNames.add(matcher.group(1));
-
-            sub_streams.add("CREATE STREAM "+ matcher.group(1) +" AS ");
-            index = index + 1;
-        }
-        index = 0;
-        pattern = Pattern.compile("(SELECT '.*?' AS `..` )");
-        matcher = pattern.matcher(mydata);
-        while (matcher.find())
-        {
-            sub_streams.set(index, sub_streams.get(index) + matcher.group(1));
-            index = index + 1;
-        }
-        index = 0;
-        Pattern pattern2 = Pattern.compile("SELECT 1 AS uselessVariable (.*?\\) )");
-        matcher = pattern2.matcher(mydata);
-        while (matcher.find())
-        {
-            String foo = matcher.group(1).replaceAll("\\(.*`ROWKEY` AND", "(");
-            sub_streams.set(index, sub_streams.get(index) + foo);
-            index = index + 1;
-        }
-        while (index > 0)
-        {
-            index = index - 1;
-            sub_streams.set(index, sub_streams.get(index).replaceAll("(\\()+", " ").replaceAll("(\\))+", " ") + "EMIT CHANGES LIMIT 1;");
-            stream_amount = stream_amount + 1;
-        }
-
-        String main_stream = (
-                (matcher = Pattern.compile(".*(`.*?`)").matcher(myoriginaldata))
-                        .find() ? matcher.group(1) : null);
-
-        //redo
-        String select_name = (
-                (matcher = Pattern.compile("AS (`.*?`)").matcher(mydata))
-                        .find() ? matcher.group(1) : null);
-        //redo
-        String select_name_first = (
-                (matcher = Pattern.compile("(`..?`) WHERE").matcher(mydata))
-                        .find() ? matcher.group(1) : null);
-
-        // Create temporary streams
-        createTmpStream(sub_streams, main_stream, select_name, select_name_first, sub_streamNames);
-
-        // Select
-        String ksql = String.format("SELECT %s FROM %s EMIT CHANGES LIMIT %d;", select_name_first, main_stream, stream_amount);
-
-        return ksql;
-    }
-
-    private void createTmpStream(List<String> sub_streams, String main_stream, String select_name, String select_name_first, List<String> sub_streamNames){
-
-        // create tmp stream
-        int tmp_counter = 0;
-        while (tmp_counter < sub_streamNames.size())
-        {
-            try{
-                sqlStatement.executeQuery(sub_streams.get(tmp_counter));
-                drop_stream.add(String.format("DROP STREAM %s", sub_streamNames.get(tmp_counter)));
-                if(tmp_counter == 0){
-                    // Create Query Stream
-                    sqlStatement.executeQuery(String.format("CREATE STREAM %s AS SELECT %s as %s FROM %s EMIT CHANGES LIMIT 1;", main_stream, select_name, select_name_first, sub_streamNames.get(tmp_counter)));
-                    drop_stream.add(String.format("DROP STREAM %s", main_stream));
-                }else{
-                    // Insert
-                    sqlStatement.executeQuery(String.format("INSERT INTO %s SELECT %s as %s FROM %s EMIT CHANGES LIMIT 1;", main_stream, select_name, select_name_first, sub_streamNames.get(tmp_counter)));
+                break;
+            case 2:
+                tmp_counter = insert_stream.size()-2;
+                while (tmp_counter > -1)
+                {
+                    try{
+                        sqlStatement.executeQuery(insert_stream.get(tmp_counter));
+                        tmp_counter = tmp_counter - 1;
+                    }catch (SQLException ex){
+                        ex.printStackTrace();
+                    }
                 }
-                tmp_counter = tmp_counter + 1;
-            }catch (SQLException ex){
-                ex.printStackTrace();
-            }
+                break;
+            default:
+                log.debug("Not (yet) supported execution type");
         }
     }
 

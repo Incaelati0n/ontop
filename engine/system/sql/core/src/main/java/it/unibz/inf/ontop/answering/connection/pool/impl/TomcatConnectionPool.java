@@ -40,6 +40,8 @@ public class TomcatConnectionPool implements JDBCConnectionPool {
                 poolProperties.setValidationQuery("select 1 from dual");
             else if (driver.contains("db2"))
                 poolProperties.setValidationQuery("select 1 from sysibm.sysdummy1");
+            else if (driver.contains("ksql"))
+                poolProperties.setValidationQuery("select 1 from test emit changes limit 1");
             else
                 poolProperties.setValidationQuery("select 1");
         }
