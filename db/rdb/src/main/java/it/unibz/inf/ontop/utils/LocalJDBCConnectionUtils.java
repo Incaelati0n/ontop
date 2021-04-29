@@ -25,8 +25,8 @@ public class LocalJDBCConnectionUtils {
 
                 // Kafka (ksql) Driver needs "special" registering
                 if((settings.getJdbcDriver().equals("com.github.mmolimar.ksql.jdbc.KsqlDriver"))){
-                    Driver ksqlDriver = new com.github.mmolimar.ksql.jdbc.KsqlDriver();
-                    DriverManager.registerDriver(ksqlDriver);
+                    //Driver ksqlDriver = new com.github.mmolimar.ksql.jdbc.KsqlDriver();
+                    //DriverManager.registerDriver(ksqlDriver);
                 }
             } catch (ClassNotFoundException e) {
                 throw new SQLException("Cannot load the driver: " + e.getMessage());
